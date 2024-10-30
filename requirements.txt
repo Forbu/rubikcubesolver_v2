@@ -1,0 +1,11 @@
+lightning
+jax
+jaxlib
+jumanji # simulation
+flashbax # batching tech
+wandb # logging
+numpy 
+scipy
+matplotlib
+einops
+pytest

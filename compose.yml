@@ -1,0 +1,10 @@
+
+# docker compose file
+api:
+  build:
+    context: .
+    dockerfile: Dockerfile
+    volumes:
+      - ${PWD}:/rewardguidance
+    command: ["tail", "-f", "/dev/null"]
+

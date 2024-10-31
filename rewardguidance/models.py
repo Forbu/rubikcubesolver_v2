@@ -53,6 +53,7 @@ class RewardGuidanceModel(nn.Module):
                 d_conv=4,
                 expand=2,
                 headdim=8,
+                chunk_size=8,
             )
         )
 
@@ -134,7 +135,7 @@ class RewardGuidanceModel(nn.Module):
         )
 
         # we pass the input through the mamba2 model
-        x = self.mamba2(x)
+        x, inference_cache = self.mamba2(x)
 
         # we add another embedding for the time flags
         x = (
@@ -157,6 +158,9 @@ class RewardGuidanceModel(nn.Module):
 
         # # sum for the reward over the time
         # reward = reward.max(dim=1)
+
+        # we take only the seq_future_states last states
+        state_final = state_final[:, -self.nb_future_states:, :]
 
         # we want to modify the state_final to be of shape (batch_size, seq_len, 6*9, 6)
         state_final = state_final.view(batch_size, seq_future_states, -1, 6)

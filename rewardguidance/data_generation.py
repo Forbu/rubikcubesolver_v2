@@ -1,3 +1,10 @@
+# -*- coding: utf-8 -*-
+"""
+Created by Adrien Bufort
+Created on 2024-10-31
+This code is the property of Orange Innovation
+All rights reserved.
+"""
 """
 Data generation for the reward guidance model.
 
@@ -15,8 +22,6 @@ import torch
 import pytorch_lightning as pl
 from typing import List, Tuple, Dict
 
-import random
-
 import jax
 import jax.numpy as jnp
 
@@ -30,11 +35,11 @@ for i in range(6):
 
 
 def generate_random_data(
-    batch_size: int, nb_init_seq: int, nb_future_seq: int, key: jax.random.PRNGKey
+    batch_size: int, global_batch_size: int, nb_init_seq: int, nb_future_seq: int, key: jax.random.PRNGKey
 ):
     env, buffer = init_env_buffer(sample_batch_size=batch_size)
 
-    nb_games = batch_size
+    nb_games = global_batch_size
     len_seq = nb_init_seq + nb_future_seq
 
     state_first = jnp.zeros((6, 3, 3))
@@ -107,7 +112,7 @@ def generate_random_data(
     return buffer, buffer_list
 
 
-class ReplayBuffer:
+class RewardGuidanceBuffer:
     def __init__(self, buffer, buffer_list, key):
         self.buffer = buffer
         self.buffer_list = buffer_list

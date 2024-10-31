@@ -13,7 +13,7 @@ import torch.nn.functional as F
 from torch.distributions.dirichlet import Dirichlet
 
 
-class RewardGuidanceModel(L.LightningModule):
+class PLRewardGuidanceModel(L.LightningModule):
     def __init__(self, model: torch.nn.Module, lr: float = 1e-3):
         super().__init__()
         self.model = model
@@ -76,7 +76,7 @@ class RewardGuidanceModel(L.LightningModule):
 
         target = future_states - pur_noise
 
-        output_target = torch.zeros_like(target)
+        # output_target = torch.zeros_like(target)
 
         # compute the loss for the reward and the state_final_logits for
         # the shortcut value 0

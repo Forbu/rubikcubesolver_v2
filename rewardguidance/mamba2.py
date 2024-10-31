@@ -237,7 +237,8 @@ def ssd(x, A, B, C, chunk_size, initial_states=None, device: Device = None):
      1. https://tridao.me/blog/2024/mamba2-part3-algorithm/
      2. https://github.com/state-spaces/mamba/blob/219f03c840d5a44e7d42e4e728134834fddccf45/mamba_ssm/modules/ssd_minimal.py#L34-L78
     """
-
+    # print("x.shape", x.shape)
+    # print("chunk_size", chunk_size)
     assert x.shape[1] % chunk_size == 0
 
     # Rearrange into chunks

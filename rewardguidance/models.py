@@ -34,8 +34,9 @@ class RewardGuidanceModel(nn.Module):
         nb_future_states: int = 16,
         nb_init_states: int = 1,
         nb_hidden_dim: int = 128,
-        nb_input_dim: int = 392,
-        nb_output_dim: int = 32,
+        nb_input_dim: int = 9*6*6,
+        nb_output_dim: int = 9*6*6,
+        chunk_size: int = 8,
     ):
         super().__init__()
 
@@ -53,7 +54,7 @@ class RewardGuidanceModel(nn.Module):
                 d_conv=4,
                 expand=2,
                 headdim=8,
-                chunk_size=8,
+                chunk_size=chunk_size,
             )
         )
 

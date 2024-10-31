@@ -109,7 +109,7 @@ def generate_random_data(
 
 
 
-def reshape_sample(sample):
+def reshape_sample(sample, nb_init_seq, nb_future_seq):
     sample.experience["state_histo"] = sample.experience["state_histo"].reshape(
         (
             sample.experience["state_histo"].shape[0],
@@ -129,8 +129,8 @@ def reshape_sample(sample):
     batch = sample.experience
     len_seq = batch["state_histo"].shape[1]
 
-    batch["state_past"] = batch["state_histo"][:, : len_seq // 4, :, :]
-    batch["state_future"] = batch["state_histo"][:, len_seq // 4 :, :, :]
+    batch["state_past"] = batch["state_histo"][:, : nb_init_seq, :, :]
+    batch["state_future"] = batch["state_histo"][:, nb_init_seq :, :, :]
 
     batch["action_inverse"] = sample.experience["action"][:, 1:, :]
 
@@ -179,15 +179,18 @@ def reshape_sample(sample):
     return batch
 
 class RewardGuidanceBuffer:
-    def __init__(self, buffer, buffer_list, nb_games, key):
+    def __init__(self, buffer, buffer_list, nb_games, nb_init_seq, nb_future_seq, key):
         self.buffer = buffer
         self.buffer_list = buffer_list
         self.key = key
         self.nb_games = nb_games
+        self.nb_init_seq = nb_init_seq
+        self.nb_future_seq = nb_future_seq
+
     def sample(self):
         self.key, subkey = jax.random.split(self.key)
         samples = self.buffer.sample(self.buffer_list, subkey)
-        return reshape_sample(samples)
+        return reshape_sample(samples, self.nb_init_seq, self.nb_future_seq)
 
 
     def add(self, new_data: List[Dict]):
@@ -235,7 +238,7 @@ def fast_gathering_data_diffusion(
     reward = jnp.where(state_histo != goal_observation, -1.0, 1.0)
 
     reward = reward.mean(axis=[2, 3, 4])
-    reward = reward[:, -1] - reward[:, rollout_length//4]
+    reward = reward.max(axis=1)
 
     for idx_batch in range(batch_size):
         buffer_list = buffer.add(

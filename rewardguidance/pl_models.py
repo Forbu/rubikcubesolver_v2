@@ -32,8 +32,9 @@ class PLRewardGuidanceModel(L.LightningModule):
         init_states: torch.Tensor,
         future_states: torch.Tensor,
         time_flags: torch.Tensor,
+        shortcut_value: torch.Tensor,
     ) -> torch.Tensor:
-        return self.model(init_states, future_states, time_flags)
+        return self.model(init_states, future_states, time_flags, shortcut_value)
 
     def training_step(self, batch, batch_idx):
         """
@@ -50,7 +51,11 @@ class PLRewardGuidanceModel(L.LightningModule):
             future_states is of shape (batch_size, nb_future_seq, 9*6, 6)
             rewards is of shape (batch_size, 1)
         """
-        init_states, future_states, rewards = batch
+        init_states, future_states, rewards = (
+            batch["state_past"],
+            batch["state_future"],
+            batch["reward"],
+        )
 
         batch_size = init_states.shape[0]
 
@@ -63,10 +68,11 @@ class PLRewardGuidanceModel(L.LightningModule):
 
         # create a noisy future_states (matching flow setup)
         pur_noise = self.dirichlet_dist.sample(
-            sample_shape=(batch_size, future_states.shape[1], 64)
+            sample_shape=(batch_size, future_states.shape[1], 9*6)
         )
-        future_states_noisy = future_states * time_flags + pur_noise * (
-            1.0 - time_flags
+
+        future_states_noisy = future_states * time_flags.unsqueeze(-1).unsqueeze(-1) + pur_noise * (
+            1.0 - time_flags.unsqueeze(-1).unsqueeze(-1)
         )
 
         # forward pass
@@ -81,10 +87,7 @@ class PLRewardGuidanceModel(L.LightningModule):
         # compute the loss for the reward and the state_final_logits for
         # the shortcut value 0
         output_target = (
-            torch.softmax(
-                state_final_logits, dim=-1
-            )
-            - 1.0 / self.nb_dim_dirichlet
+            torch.softmax(state_final_logits, dim=-1) - 1.0 / self.nb_dim_dirichlet
         )
 
         loss_regularization = F.mse_loss(output_target, target)

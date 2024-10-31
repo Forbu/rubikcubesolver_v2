@@ -6,6 +6,7 @@ from rewardguidance.pl_models import PLRewardGuidanceModel
 from rewardguidance.models import RewardGuidanceModel
 from rewardguidance.data_generation import generate_random_data, RewardGuidanceBuffer
 
+import numpy as np
 import jax
 import torch
 # variable to check if cuda is available
@@ -17,7 +18,7 @@ def main():
     key = jax.random.PRNGKey(42)
 
     batch_size = 10
-    global_batch_size = 1000
+    global_batch_size = 100
 
     print("Generating data...")
     buffer, buffer_list = generate_random_data(
@@ -30,7 +31,7 @@ def main():
 
     key, subkey = jax.random.split(key)
 
-    replay_buffer = RewardGuidanceBuffer(buffer, buffer_list, subkey)
+    replay_buffer = RewardGuidanceBuffer(buffer, buffer_list, global_batch_size // batch_size, subkey)
 
     print("Data generated. Now training...")
 
@@ -43,25 +44,31 @@ def main():
     nb_epochs = 10
     # here we need to create a custom loop for training
     for epoch in range(nb_epochs):
-        batch = replay_buffer.sample()
+        for i in range(replay_buffer.nb_games):
+            batch = replay_buffer.sample()
 
-        # convert batch to torch tensors
-        batch = {k: torch.tensor(v) for k, v in batch.items()}
+            print(batch)
 
-        # move tensors to cuda if available
-        if cuda_available:
-            batch = {k: v.cuda() for k, v in batch.items()}
+            # convert batch (dict) to torch tensors
+            batch_torch = {}
 
-        # train model
-        loss = pl_model.training_step(batch)
+            for k in batch.keys():
+                batch_torch[k] = torch.from_numpy(np.array(batch[k]))
 
-        # backpropagate
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+            # move tensors to cuda if available
+            if cuda_available:
+                batch_torch = {k: batch_torch[k].cuda() for k in batch_torch.keys()}
 
-        # log loss
-        pl_model.log("loss", loss)
+            # train model
+            loss = pl_model.training_step(batch_torch, i)
+
+            # backpropagate
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            # log loss
+            pl_model.log("loss", loss, on_step=True, on_epoch=True)
 
 
 if __name__ == "__main__":

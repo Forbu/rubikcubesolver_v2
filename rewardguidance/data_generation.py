@@ -33,11 +33,38 @@ GOAL_OBSERVATION = jnp.zeros((6, 3, 3))
 for i in range(6):
     GOAL_OBSERVATION = GOAL_OBSERVATION.at[i, :, :].set(i)
 
+ENV = jumanji.make("RubiksCube-v0")
+jit_step = jax.jit(ENV.step)
+
+def step_fn(state, key):
+    """
+    Simple step function
+    We choose a random action
+    """
+    action = jax.random.randint(
+        key=key,
+        minval=ENV.action_spec.minimum,
+        maxval=ENV.action_spec.maximum,
+        shape=(3,),
+    )
+
+    new_state, timestep = jit_step(state, action)
+    timestep.extras["action"] = action
+
+    return new_state, timestep
+
+
+def run_n_steps(state, key, n):
+    random_keys = jax.random.split(key, n)
+    state, rollout = jax.lax.scan(step_fn, state, random_keys)
+    return rollout
+
 
 def generate_random_data(
-    batch_size: int, global_batch_size: int, nb_init_seq: int, nb_future_seq: int, key: jax.random.PRNGKey
+    batch_size: int, global_batch_size: int, nb_init_seq: int, nb_future_seq: int, key: jax.random.PRNGKey,
+    buffer_max_batch_size: int = 1024 * 100
 ):
-    env, buffer = init_env_buffer(sample_batch_size=batch_size)
+    env, buffer = init_env_buffer(sample_batch_size=batch_size, max_length=buffer_max_batch_size)
 
     nb_games = global_batch_size
     len_seq = nb_init_seq + nb_future_seq
@@ -45,7 +72,6 @@ def generate_random_data(
     state_first = jnp.zeros((6, 3, 3))
     state_next = jnp.zeros((len_seq, 6, 3, 3))
     action = jnp.zeros((len_seq, 3))
-    action_proba = jnp.zeros((len_seq, 9))
 
     # transform state to int8 type
     state_first = state_first.astype(jnp.int8)
@@ -54,72 +80,115 @@ def generate_random_data(
     # action to int32 type
     action = action.astype(jnp.int32)
 
-    reward = jnp.zeros((len_seq))
+    reward = jnp.zeros((1))
 
-    jit_step = jax.jit(env.step)
+    vmap_reset = jax.vmap(jax.jit(env.reset))
 
     buffer_list = buffer.init(
         {
-            "state_first": state_first,
             "action": action,
             "reward": reward,
-            "state_next": state_next,
-            "action_pred": action_proba,
+            "state_histo": state_next,
         }
     )
 
-    def step_fn(state, key):
-        """
-        Simple step function
-        We choose a random action
-        """
-
-        action = jax.random.randint(
-            key=key,
-            minval=env.action_spec.minimum,
-            maxval=env.action_spec.maximum,
-            shape=(3,),
-        )
-
-        new_state, timestep = jit_step(state, action)
-        timestep.extras["action"] = action
-        timestep.extras["action_pred"] = jnp.zeros((9,))
-
-        return new_state, timestep
-
-    def run_n_steps(state, key, n):
-        random_keys = jax.random.split(key, n)
-        state, rollout = jax.lax.scan(step_fn, state, random_keys)
-
-        return rollout
-
-    vmap_reset = jax.vmap(jax.jit(env.reset))
     vmap_step = jax.vmap(run_n_steps, in_axes=(0, 0, None))
 
-    key, subkey = jax.random.split(key)
-
-    buffer, buffer_list = fast_gathering_data(
+    buffer, buffer_list = fast_gathering_data_diffusion(
         env,
         vmap_reset,
         vmap_step,
-        nb_games,
+        nb_games, 
         len_seq,
         buffer,
         buffer_list,
-        subkey,
+        key,
     )
 
     return buffer, buffer_list
 
 
+
+def reshape_sample(sample):
+    sample.experience["state_histo"] = sample.experience["state_histo"].reshape(
+        (
+            sample.experience["state_histo"].shape[0],
+            sample.experience["state_histo"].shape[1],
+            54,
+        )
+    )
+
+    # one hot encoding for state_histo
+    sample.experience["state_histo"] = jax.nn.one_hot(
+        sample.experience["state_histo"],
+        num_classes=6,
+        axis=-1,
+    )
+
+    # batch creation
+    batch = sample.experience
+    len_seq = batch["state_histo"].shape[1]
+
+    batch["state_past"] = batch["state_histo"][:, : len_seq // 4, :, :]
+    batch["state_future"] = batch["state_histo"][:, len_seq // 4 :, :, :]
+
+    batch["action_inverse"] = sample.experience["action"][:, 1:, :]
+
+    # flatten the action_inverse to only have batch data
+    batch["action_inverse"] = jnp.reshape(
+        batch["action_inverse"],
+        (batch["action_inverse"].shape[0] * batch["action_inverse"].shape[1], -1),
+    )
+
+    # now we can one hot encode the action_inverse
+    action_inverse_0 = jax.nn.one_hot(
+        batch["action_inverse"][:, 0], num_classes=6, axis=-1
+    )
+    action_inverse_1 = jax.nn.one_hot(
+        batch["action_inverse"][:, 2], num_classes=3, axis=-1
+    )
+
+    batch["action_inverse"] = jnp.concatenate(
+        [action_inverse_0, action_inverse_1], axis=1
+    )
+
+    state_histo_inverse_t = sample.experience["state_histo"][:, :-1, :, :]
+    state_histo_inverse_td1 = sample.experience["state_histo"][:, 1:, :, :]
+
+    batch["state_histo_inverse_t"] = state_histo_inverse_t
+    batch["state_histo_inverse_td1"] = state_histo_inverse_td1
+
+    # we flatten the two state_histo_inverse
+    batch["state_histo_inverse_t"] = jnp.reshape(
+        batch["state_histo_inverse_t"],
+        (
+            batch["state_histo_inverse_t"].shape[0]
+            * batch["state_histo_inverse_t"].shape[1],
+            -1,
+        ),
+    )
+    batch["state_histo_inverse_td1"] = jnp.reshape(
+        batch["state_histo_inverse_td1"],
+        (
+            batch["state_histo_inverse_td1"].shape[0]
+            * batch["state_histo_inverse_td1"].shape[1],
+            -1,
+        ),
+    )
+
+    return batch
+
 class RewardGuidanceBuffer:
-    def __init__(self, buffer, buffer_list, key):
+    def __init__(self, buffer, buffer_list, nb_games, key):
         self.buffer = buffer
         self.buffer_list = buffer_list
         self.key = key
-
+        self.nb_games = nb_games
     def sample(self):
-        return self.buffer.sample(self.buffer_list)
+        self.key, subkey = jax.random.split(self.key)
+        samples = self.buffer.sample(self.buffer_list, subkey)
+        return reshape_sample(samples)
+
 
     def add(self, new_data: List[Dict]):
         """
@@ -136,21 +205,9 @@ class RewardGuidanceBuffer:
             self.buffer.add(self.buffer_list, data)
 
 
-def fast_gathering_data(
+def fast_gathering_data_diffusion(
     env, vmap_reset, vmap_step, batch_size, rollout_length, buffer, buffer_list, key
 ):
-    """
-    Fast gathering data for the Rubik's Cube game.
-    Params :
-        env : the environment (coming from jumanji.make)
-        vmap_reset : the reset function (coming from jax.vmap(jax.jit(env.reset)))
-        vmap_step : the step function (coming from jax.vmap(run_n_steps, in_axes=(0, 0, None)))
-        batch_size : the batch size
-        rollout_length : the length of the rollout
-        buffer : the buffer (coming from flashbax.make_item_buffer)
-        buffer_list : the buffer list (empty at the beginning)
-        key : the key
-    """
     key1, key2 = jax.random.split(key)
 
     keys = jax.random.split(key1, batch_size)
@@ -162,10 +219,8 @@ def fast_gathering_data(
 
     # we retrieve the information from the state_first (state), state_next,
     #  the action and the reward
-    state_first = timestep.observation.cube
-    state_next = rollout.observation.cube
+    state_histo = rollout.observation.cube
     action = rollout.extras["action"]
-    action_pred = rollout.extras["action_pred"]
 
     # now we compute the reward :
     reward = jnp.zeros((batch_size, rollout_length))
@@ -177,21 +232,18 @@ def fast_gathering_data(
         GOAL_OBSERVATION[None, None, :, :, :], batch_size, axis=0
     )
     goal_observation = jnp.repeat(goal_observation, rollout_length, axis=1)
-    reward = jnp.where(state_next != goal_observation, -1.0, 1.0)
+    reward = jnp.where(state_histo != goal_observation, -1.0, 1.0)
 
     reward = reward.mean(axis=[2, 3, 4])
+    reward = reward[:, -1] - reward[:, rollout_length//4]
 
     for idx_batch in range(batch_size):
         buffer_list = buffer.add(
             buffer_list,
             {
-                "state_first": state_first[idx_batch],
                 "action": action[idx_batch],
                 "reward": reward[idx_batch],
-                "state_next": state_next[idx_batch],
-                "action_pred": action_pred[
-                    idx_batch
-                ],  # here we could manage the action prediction
+                "state_histo": state_histo[idx_batch],
             },
         )
 
@@ -209,7 +261,7 @@ def init_replay_buffer():
 
 
 def update_replay_buffer(
-    replay_buffer: ReplayBuffer, new_data: List[Tuple[torch.Tensor, torch.Tensor]]
+    replay_buffer: RewardGuidanceBuffer, new_data: List[Tuple[torch.Tensor, torch.Tensor]]
 ):
     pass
 

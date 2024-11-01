@@ -1,5 +1,5 @@
 lightning
-jax
+jax[cuda12]
 jaxlib
 jumanji # simulation
 flashbax # batching tech

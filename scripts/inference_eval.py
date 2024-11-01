@@ -1,5 +1,5 @@
 """
-Training script for the reward guidance model.
+Inference script for the reward guidance model.
 """
 
 from tqdm import tqdm
@@ -33,16 +33,17 @@ def count_parameters(model):
     print(f"Total Trainable Params: {total_params}")
     return total_params
 
+
 def main():
     # init wandb
     # init with key
-    wandb.init(project="reward-guidance-rubiks", entity="forbu14")
+    # wandb.init(project="reward-guidance-rubiks", entity="forbu14")
 
     # first init random jax key
-    key = jax.random.PRNGKey(42)
+    key = jax.random.PRNGKey(142)
 
     batch_size = 64
-    global_batch_size = 100000
+    global_batch_size = 1000
     nb_init_seq = 1
     nb_future_seq = 11
 
@@ -84,48 +85,68 @@ def main():
     print("Model created")
     count_parameters(pl_model.model)
 
+    # load model from models/ folder
+    path_model = "models/model_19.pt"
+    pl_model.load_state_dict(torch.load(path_model))
+
     if cuda_available:
         pl_model.model = pl_model.model.to("cuda")
         pl_model = pl_model.to("cuda")
 
-    optimizer = torch.optim.Adam(pl_model.parameters(), lr=1e-3)
+    # set inference mode
+    pl_model.eval()
 
-    nb_epochs = 100
-    # here we need to create a custom loop for training
-    for epoch in range(nb_epochs):
-        for i in tqdm(range(replay_buffer.nb_games)):
-            batch = replay_buffer.sample()
+    # generate data
+    batch = replay_buffer.sample()
 
-            # convert batch (dict) to torch tensors
-            batch_torch = {}
+    # get the init states, future states and rewards
+    init_states, future_states, rewards = (
+        torch.from_numpy(np.array(batch["state_past"])).to(DEVICE),
+        torch.from_numpy(np.array(batch["state_future"])).to(DEVICE),
+        torch.from_numpy(np.array(batch["reward"])).to(DEVICE),
+    )
 
-            for k in batch.keys():
-                if k in ["state_past", "state_future", "reward"]:
-                    batch_torch[k] = torch.from_numpy(np.array(batch[k]))
+    # now we can generate data
+    result_generation = pl_model.generate(
+        nb_batch=64, nb_iter=100.0, init_states=init_states
+    )
 
-                    # print("batch_torch[k].shape for k", k, batch_torch[k].shape)
+    # now we want to retrieve the data
+    # and plot the results
+    init_value = np.argmax(np.array(batch["state_past"]), axis=-1)
 
-            # move tensors to cuda if available
-            if cuda_available:
-                batch_torch = {k: batch_torch[k].cuda() for k in batch_torch.keys()}
+    result_generation = np.argmax(result_generation.detach().cpu().numpy(), axis=-1)
 
-            # train model
-            loss = pl_model.training_step(batch_torch, i)
+    # now we want to plot the results
+    # we can use matplotlib or plotly
+    import matplotlib.pyplot as plt
 
-            # backpropagate
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+    fig, axs = plt.subplots(1, 2, figsize=(10, 5))
 
-            # log loss
-            # pl_model.log("loss", loss, on_step=True, on_epoch=True)
+    # for the first batches we plot the init value
+    for idx in range(4):
+        init_value_tmp = init_value[idx, 0, :]
 
-            # log metrics
-            if i % 100 == 0:
-                wandb.log({"loss": loss.cpu().item()})
 
-        # save model
-        torch.save(pl_model.state_dict(), f"models/model_{epoch}.pt")
+
+        # reshape to get image
+        init_value_tmp = init_value_tmp.reshape(6, 3, 3)
+        print(init_value_tmp)
+        
+        init_value_tmp = init_value_tmp.reshape(6* 3, 3)
+        print(init_value_tmp)
+
+        # same thing but for the generated value
+        result_generation_tmp = result_generation[idx, 0, :].reshape(6, 3, 3).reshape(6 * 3, 3)
+
+        axs[0].imshow(init_value_tmp)
+        axs[0].set_title("Init value")
+        axs[1].imshow(result_generation_tmp)
+        axs[1].set_title("Generated value")
+
+        # save images in images/
+        plt.savefig(f"images/image_{idx}.png")
+
 
 if __name__ == "__main__":
     main()

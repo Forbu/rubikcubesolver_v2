@@ -10,10 +10,11 @@ The model will then output a reward for the whole trajectory, indicating how goo
 
 
 from typing import Tuple
+import einops
 import torch
 import torch.nn as nn
 
-from rewardguidance.mamba2 import Mamba2, Mamba2Config
+from rewardguidance.mamba2 import Mamba2, Mamba2Config, RMSNorm
 
 
 class RewardGuidanceModel(nn.Module):
@@ -37,6 +38,7 @@ class RewardGuidanceModel(nn.Module):
         nb_input_dim: int = 9*6*6,
         nb_output_dim: int = 9*6*6,
         chunk_size: int = 8,
+        device = None,
     ):
         super().__init__()
 
@@ -46,8 +48,7 @@ class RewardGuidanceModel(nn.Module):
         self.nb_input_dim = nb_input_dim
         self.nb_output_dim = nb_output_dim
 
-        self.mamba2 = Mamba2(
-            Mamba2Config(
+        config = Mamba2Config(
                 d_model=nb_hidden_dim,
                 n_layer=8,
                 d_state=32,
@@ -55,8 +56,20 @@ class RewardGuidanceModel(nn.Module):
                 expand=2,
                 headdim=8,
                 chunk_size=chunk_size,
-            )
         )
+
+        self.mamba2_layers = nn.ModuleList(
+                    [
+                        nn.ModuleDict(
+                            dict(
+                                mixer=Mamba2(config, device=device),
+                                norm=RMSNorm(config.d_model, device=device),
+                            )
+                        )
+                        for _ in range(config.n_layer)
+                    ]
+                )
+
 
         self.input_layer = nn.Linear(nb_input_dim, nb_hidden_dim // 2)
         self.output_layer = nn.Linear(nb_hidden_dim, nb_output_dim)
@@ -102,10 +115,9 @@ class RewardGuidanceModel(nn.Module):
             seq_future_states == self.nb_future_states
         ), f"seq_future_states {seq_future_states} != nb_future_states {self.nb_future_states}"
 
-        # first we flatten the future states and the init states (for the last two dimensions)
-        init_states = init_states.view(batch_size, seq_init_states, -1)
-        future_states = future_states.view(batch_size, seq_future_states, -1)
-
+        init_states = einops.rearrange(init_states, "b s h w -> b s (h w)")
+        future_states = einops.rearrange(future_states, "b s h w -> b s (h w)")
+        
         # we create the embeddings for the future states and the init states
         states_embeddings = self.states_embedding.repeat(batch_size, 1, 1)
 
@@ -136,7 +148,9 @@ class RewardGuidanceModel(nn.Module):
         )
 
         # we pass the input through the mamba2 model
-        x, inference_cache = self.mamba2(x)
+        for i, layer in enumerate(self.mamba2_layers):
+            y, _ = layer.mixer(layer.norm(x), None)
+            x = y + x
 
         # we add another embedding for the time flags
         x = (

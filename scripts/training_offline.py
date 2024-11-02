@@ -33,19 +33,7 @@ def count_parameters(model):
     print(f"Total Trainable Params: {total_params}")
     return total_params
 
-def main():
-    # init wandb
-    # init with key
-    wandb.init(project="reward-guidance-rubiks", entity="forbu14")
-
-    # first init random jax key
-    key = jax.random.PRNGKey(42)
-
-    batch_size = 64
-    global_batch_size = 100000
-    nb_init_seq = 1
-    nb_future_seq = 11
-
+def init_replay_buffer(key, batch_size, global_batch_size, nb_init_seq, nb_future_seq):
     print("Generating data...")
     buffer, buffer_list = generate_random_data(
         key=key,
@@ -65,6 +53,52 @@ def main():
         nb_future_seq,
         subkey,
     )
+
+    return replay_buffer
+
+def convert_batch_to_proper_device(batch):
+    # convert batch (dict) to torch tensors
+    batch_torch = {}
+
+    for k in batch.keys():
+        if k in ["state_past", "state_future", "reward"]:
+            batch_torch[k] = torch.from_numpy(np.array(batch[k]))
+
+    # move tensors to cuda if available
+    if cuda_available:
+        batch_torch = {k: batch_torch[k].cuda() for k in batch_torch.keys()}
+
+    return batch_torch
+
+def main():
+    # init wandb
+    # init with key
+
+    # first init random jax key
+    key = jax.random.PRNGKey(42)
+    lr = 0.001
+
+    batch_size = 64
+    global_batch_size = 100000
+    nb_init_seq = 1
+    nb_future_seq = 11
+
+    # load key in wandb_key.txt
+    with open("wandb_key.txt", "r") as f:
+        key = f.read().strip()
+
+    wandb.login(key=key)
+    wandb.init(project="reward-guidance-rubiks", entity="forbu14")
+
+
+    replay_buffer = init_replay_buffer(key, batch_size, global_batch_size, nb_init_seq, nb_future_seq)
+
+    key = jax.random.PRNGKey(155)
+
+    batch_size = 64
+    global_batch_size_valid = 1000
+
+    replay_buffer_valid = init_replay_buffer(key, batch_size, global_batch_size_valid, nb_init_seq, nb_future_seq)
 
     print("Data generated. Now training...")
 
@@ -88,7 +122,7 @@ def main():
         pl_model.model = pl_model.model.to("cuda")
         pl_model = pl_model.to("cuda")
 
-    optimizer = torch.optim.Adam(pl_model.parameters(), lr=1e-3)
+    optimizer = torch.optim.Adam(pl_model.parameters(), lr=lr)
 
     nb_epochs = 100
     # here we need to create a custom loop for training
@@ -97,18 +131,8 @@ def main():
             batch = replay_buffer.sample()
 
             # convert batch (dict) to torch tensors
-            batch_torch = {}
-
-            for k in batch.keys():
-                if k in ["state_past", "state_future", "reward"]:
-                    batch_torch[k] = torch.from_numpy(np.array(batch[k]))
-
-                    # print("batch_torch[k].shape for k", k, batch_torch[k].shape)
-
-            # move tensors to cuda if available
-            if cuda_available:
-                batch_torch = {k: batch_torch[k].cuda() for k in batch_torch.keys()}
-
+            batch_torch = convert_batch_to_proper_device(batch) 
+            
             # train model
             loss = pl_model.training_step(batch_torch, i)
 
@@ -123,6 +147,18 @@ def main():
             # log metrics
             if i % 100 == 0:
                 wandb.log({"loss": loss.cpu().item()})
+
+                with torch.inference_mode():
+                    batch = replay_buffer_valid.sample()
+
+                    # convert batch (dict) to torch tensors
+                    batch_torch = convert_batch_to_proper_device(batch) 
+                    
+                    # train model
+                    loss = pl_model.training_step(batch_torch, i)
+
+                    wandb.log({"loss_valid": loss.cpu().item()})
+
 
         # save model
         torch.save(pl_model.state_dict(), f"models/model_{epoch}.pt")

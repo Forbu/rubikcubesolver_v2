@@ -8,4 +8,5 @@ numpy
 scipy
 matplotlib
 einops
+prettytable
 pytest

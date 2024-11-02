@@ -72,7 +72,7 @@ def main():
     model = RewardGuidanceModel(
         nb_init_states=nb_init_seq,
         nb_future_states=nb_future_seq,
-        nb_hidden_dim=256,
+        nb_hidden_dim=512,
         nb_input_dim=9 * 6 * 6,
         nb_output_dim=9 * 6 * 6,
         chunk_size=2,

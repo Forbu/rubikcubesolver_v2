@@ -34,10 +34,10 @@ class RewardGuidanceModel(nn.Module):
         self,
         nb_future_states: int = 16,
         nb_init_states: int = 1,
-        nb_hidden_dim: int = 128,
+        nb_hidden_dim: int = 512,
         nb_input_dim: int = 9*6*6,
         nb_output_dim: int = 9*6*6,
-        chunk_size: int = 8,
+        chunk_size: int = 32,
         device = None,
     ):
         super().__init__()
@@ -71,12 +71,12 @@ class RewardGuidanceModel(nn.Module):
                 )
 
 
-        self.input_layer = nn.Linear(nb_input_dim, nb_hidden_dim // 2)
+        self.input_layer = nn.Linear(nb_input_dim, nb_hidden_dim)
         self.output_layer = nn.Linear(nb_hidden_dim, nb_output_dim)
 
         # embedding for the states
         self.states_embedding = nn.Parameter(
-            torch.randn(nb_future_states + nb_init_states, nb_hidden_dim // 2)
+            torch.randn(nb_future_states + nb_init_states, nb_hidden_dim)
         )
 
         # embedding for the time flags
@@ -134,7 +134,7 @@ class RewardGuidanceModel(nn.Module):
         x = self.input_layer(x)
 
         # we concatenate the states embeddings and the input embeddings
-        x = torch.cat([states_embeddings, x], dim=2)
+        x = x + states_embeddings
 
         # modification of the input to add the time flags embeddings [:, :, :self.nb_hidden_dim]
         x = (

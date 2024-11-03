@@ -74,31 +74,34 @@ class PLRewardGuidanceModel(L.LightningModule):
             sample_shape=(batch_size, future_states.shape[1], 9 * 6)
         ).to(DEVICE)
 
+        pur_noise_reward = torch.randn(
+            (batch_size, 1)
+        ).to(DEVICE)
+
         future_states_noisy = future_states * time_flags.unsqueeze(-1).unsqueeze(
             -1
         ) + pur_noise * (1.0 - time_flags.unsqueeze(-1).unsqueeze(-1))
 
+        reward_noisy = rewards * time_flags + pur_noise_reward * (1.0 - time_flags)
+
         # forward pass
-        state_final_logits = self.forward(
-            init_states, future_states_noisy, time_flags, shortcut_value
+        state_final_speed, reward_value_speed = self.forward(
+            init_states, future_states_noisy, time_flags, reward_noisy
         )
 
         target = future_states - pur_noise
+        target_reward = rewards - reward_noisy
 
         # output_target = torch.zeros_like(target)
 
-        # compute the loss for the reward and the state_final_logits for
-        # the shortcut value 0
-        output_target = (
-            torch.softmax(state_final_logits, dim=-1) - 1.0 / self.nb_dim_dirichlet
-        )
-
-        loss_regularization = F.mse_loss(output_target, target)
+        # compute the loss for the reward and the state_final_speed for  
+        loss_regularization = F.mse_loss(state_final_speed, target)
+        loss_reward = F.mse_loss(reward_value_speed, target_reward)
 
         # log the loss
-        self.log("train_loss", loss_regularization)
+        self.log("train_loss", loss_regularization + loss_reward)
 
-        return loss_regularization
+        return loss_regularization + loss_reward, (loss_regularization, loss_reward)
 
     def generate(self, nb_batch, nb_iter=100.0, init_states=None):
         """
@@ -113,7 +116,7 @@ class PLRewardGuidanceModel(L.LightningModule):
             time_flags = torch.zeros(nb_batch, 1).to(DEVICE)
 
             # we start from shortcut value 0
-            shortcut_value = torch.zeros(nb_batch, 1).to(DEVICE)
+            reward_value_noisy = torch.zeros(nb_batch, 1).to(DEVICE)
 
             # we generate the future states using dirichlet distribution
             future_states = dirichlet_dist_inference.sample(
@@ -124,8 +127,8 @@ class PLRewardGuidanceModel(L.LightningModule):
             for i in range(int(nb_iter)):
                 # forward pass
                 time_flags = torch.ones(nb_batch, 1).to(DEVICE) * float(i) / nb_iter
-                noisy_state_final_logits = self.forward(
-                    init_states, future_states, time_flags, shortcut_value
+                noisy_state_final_logits, reward_speed = self.forward(
+                    init_states, future_states, time_flags, reward_value_noisy
                 )
 
                 # from logit to probabilities
@@ -134,9 +137,10 @@ class PLRewardGuidanceModel(L.LightningModule):
                     - 1.0 / self.nb_dim_dirichlet
                 )
 
+                reward_value_noisy = reward_value_noisy + reward_speed + 1.0 / nb_iter
                 future_states = future_states + velocity_final * 1.0 / nb_iter
 
-        return future_states
+        return future_states, reward_value_noisy
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)

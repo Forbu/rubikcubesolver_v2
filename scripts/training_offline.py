@@ -73,23 +73,21 @@ def convert_batch_to_proper_device(batch):
 def main():
     # init wandb
     # init with key
+    # load key in wandb_key.txt
+    with open("wandb_key.txt", "r") as f:
+        wandb_key = f.read().strip()
+
+    wandb.login(key=wandb_key)
+    wandb.init(project="reward-guidance-rubiks", entity="forbu14")
 
     # first init random jax key
     key = jax.random.PRNGKey(42)
     lr = 0.001
 
-    batch_size = 64
-    global_batch_size = 100000
+    batch_size = 16
+    global_batch_size = 2000
     nb_init_seq = 1
     nb_future_seq = 11
-
-    # load key in wandb_key.txt
-    with open("wandb_key.txt", "r") as f:
-        key = f.read().strip()
-
-    wandb.login(key=key)
-    wandb.init(project="reward-guidance-rubiks", entity="forbu14")
-
 
     replay_buffer = init_replay_buffer(key, batch_size, global_batch_size, nb_init_seq, nb_future_seq)
 
@@ -134,7 +132,7 @@ def main():
             batch_torch = convert_batch_to_proper_device(batch) 
             
             # train model
-            loss = pl_model.training_step(batch_torch, i)
+            loss, (loss_worldmodel, loss_reward) = pl_model.training_step(batch_torch, i)
 
             # backpropagate
             optimizer.zero_grad()
@@ -147,6 +145,8 @@ def main():
             # log metrics
             if i % 100 == 0:
                 wandb.log({"loss": loss.cpu().item()})
+                wandb.log({"loss_worldmodel": loss_worldmodel.cpu().item()})
+                wandb.log({"loss_reward": loss_reward.cpu().item()})
 
                 with torch.inference_mode():
                     batch = replay_buffer_valid.sample()
@@ -155,7 +155,7 @@ def main():
                     batch_torch = convert_batch_to_proper_device(batch) 
                     
                     # train model
-                    loss = pl_model.training_step(batch_torch, i)
+                    loss, _ = pl_model.training_step(batch_torch, i)
 
                     wandb.log({"loss_valid": loss.cpu().item()})
 

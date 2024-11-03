@@ -19,7 +19,7 @@ from rewardguidance.mamba2 import Mamba2, Mamba2Config, RMSNorm
 
 class RewardGuidanceModel(nn.Module):
     """
-    Reward guidance model with a time flags and a shortcut value.
+    Reward guidance model with a time flags and a reward value.
 
     Shortcut value is used to indicate if the trajectory is a shortcut or not.
     Time flags is used to indicate the time of the trajectory.
@@ -83,7 +83,7 @@ class RewardGuidanceModel(nn.Module):
         self.time_flags_embedding = nn.Linear(1, nb_hidden_dim * 4)
 
         # embedding for the shortcut value
-        self.shortcut_value_embedding = nn.Linear(1, nb_hidden_dim * 4)
+        self.reward_value_embedding = nn.Linear(1, nb_hidden_dim * 4)
 
         # linear layer for reward
         self.reward_layer = nn.Linear(nb_hidden_dim, 1)
@@ -93,14 +93,14 @@ class RewardGuidanceModel(nn.Module):
         init_states: torch.Tensor,
         future_states: torch.Tensor,
         time_flags: torch.Tensor,
-        shortcut_value: float = 0.0,
+        reward_value: float = 0.0,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Args:
             init_states: (batch_size, seq_len, 6*9, 6)
-            future_states: (batch_size, seq_len, 6*9, 6)
+            future_states: (batch_size, seq_len, 6*9, 6) noisy futur state (diffusion setup)
             time_flags: (batch_size, 1) value between 0 and 1 (for the time of the trajectory)
-            shortcut_value: (batch_size, 1) value between 0 and 1 (for the shortcut value)
+            reward_value: (batch_size, 1) value between 0 and 1 (for the reward value)
         Returns:
             (batch_size, seq_len, nb_output_dim)
         """
@@ -123,8 +123,8 @@ class RewardGuidanceModel(nn.Module):
 
         # we create the embeddings for the time flags
         time_flags_embeddings = self.time_flags_embedding(time_flags).unsqueeze(1)
-        shortcut_value_embeddings = self.shortcut_value_embedding(
-            shortcut_value
+        reward_value_embeddings = self.reward_value_embedding(
+            reward_value
         ).unsqueeze(1)
 
         # we concatenate the init states and the future states embeddings
@@ -140,9 +140,9 @@ class RewardGuidanceModel(nn.Module):
         x = (
             x
             * time_flags_embeddings[:, :, : self.nb_hidden_dim]
-            * shortcut_value_embeddings[:, :, : self.nb_hidden_dim]
+            * reward_value_embeddings[:, :, : self.nb_hidden_dim]
             + time_flags_embeddings[:, :, self.nb_hidden_dim : (self.nb_hidden_dim * 2)]
-            + shortcut_value_embeddings[
+            + reward_value_embeddings[
                 :, :, self.nb_hidden_dim : (self.nb_hidden_dim * 2)
             ]
         )
@@ -158,21 +158,21 @@ class RewardGuidanceModel(nn.Module):
             * time_flags_embeddings[
                 :, :, (self.nb_hidden_dim * 2) : (self.nb_hidden_dim * 3)
             ]
-            * shortcut_value_embeddings[
+            * reward_value_embeddings[
                 :, :, (self.nb_hidden_dim * 2) : (self.nb_hidden_dim * 3)
             ]
             + time_flags_embeddings[:, :, (self.nb_hidden_dim * 3) :]
-            + shortcut_value_embeddings[:, :, (self.nb_hidden_dim * 3) :]
+            + reward_value_embeddings[:, :, (self.nb_hidden_dim * 3) :]
         )
 
         # we pass the output through the output layer
         state_final = self.output_layer(x)
 
-        # # we pass the output through the reward layer
-        # reward = self.reward_layer(state_final)
+        # sum for the reward over the time
+        reward, reward_indices = x.max(dim=1)
 
-        # # sum for the reward over the time
-        # reward = reward.max(dim=1)
+        # we pass the output through the reward layer
+        reward = self.reward_layer(reward)
 
         # we take only the seq_future_states last states
         state_final = state_final[:, -self.nb_future_states:, :]
@@ -180,4 +180,4 @@ class RewardGuidanceModel(nn.Module):
         # we want to modify the state_final to be of shape (batch_size, seq_len, 6*9, 6)
         state_final = state_final.view(batch_size, seq_future_states, -1, 6)
 
-        return state_final #, reward
+        return state_final, reward

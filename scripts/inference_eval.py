@@ -86,7 +86,7 @@ def main():
     count_parameters(pl_model.model)
 
     # load model from models/ folder
-    path_model = "models/model_41.pt"
+    path_model = "models/model_99.pt"
     pl_model.load_state_dict(torch.load(path_model))
 
     if cuda_available:
@@ -107,9 +107,11 @@ def main():
     )
 
     # now we can generate data
-    result_generation = pl_model.generate(
+    result_generation, reward_gen = pl_model.generate(
         nb_batch=64, nb_iter=100.0, init_states=init_states
     )
+
+    print(result_generation[0, :, :, :])
 
     # now we want to retrieve the data
     # and plot the results
@@ -127,15 +129,10 @@ def main():
     for idx in range(4):
         init_value_tmp = init_value[idx, 0, :]
 
-
-
         # reshape to get image
         init_value_tmp = init_value_tmp.reshape(6, 3, 3)
-        print(init_value_tmp)
-        
         init_value_tmp = init_value_tmp.reshape(6* 3, 3)
-        print(init_value_tmp)
-
+        
         # same thing but for the generated value
         result_generation_tmp = result_generation[idx, 0, :].reshape(6, 3, 3).reshape(6 * 3, 3)
 

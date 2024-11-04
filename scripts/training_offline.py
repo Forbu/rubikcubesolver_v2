@@ -84,8 +84,8 @@ def main():
     key = jax.random.PRNGKey(42)
     lr = 0.001
 
-    batch_size = 16
-    global_batch_size = 2000
+    batch_size = 64
+    global_batch_size = 100000
     nb_init_seq = 1
     nb_future_seq = 11
 
@@ -120,7 +120,7 @@ def main():
         pl_model.model = pl_model.model.to("cuda")
         pl_model = pl_model.to("cuda")
 
-    optimizer = torch.optim.Adam(pl_model.parameters(), lr=lr)
+    optimizer = torch.optim.AdamW(pl_model.parameters(), lr=lr)
 
     nb_epochs = 100
     # here we need to create a custom loop for training

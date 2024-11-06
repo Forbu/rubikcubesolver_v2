@@ -120,7 +120,10 @@ def main():
         pl_model.model = pl_model.model.to("cuda")
         pl_model = pl_model.to("cuda")
 
-    optimizer = torch.optim.AdamW(pl_model.parameters(), lr=lr)
+    # optimizer = torch.optim.AdamW(pl_model.parameters(), lr=lr)
+    
+    from rewardguidance.soap import SOAP
+    optimizer = SOAP(pl_model.parameters(), lr = 1e-3, betas=(.95, .95), weight_decay=.01, precondition_frequency=10)
 
     nb_epochs = 100
     # here we need to create a custom loop for training

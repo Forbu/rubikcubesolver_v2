@@ -92,7 +92,7 @@ class PLRewardGuidanceModel(L.LightningModule):
         state_final_speed = state_final_speed - state_final_speed.mean(axis=-1, keepdim=True)
 
         target = future_states - pur_noise
-        target_reward = rewards - reward_noisy
+        target_reward = rewards - pur_noise_reward
     
         # output_target = torch.zeros_like(target)
 
@@ -101,9 +101,9 @@ class PLRewardGuidanceModel(L.LightningModule):
         loss_reward = F.mse_loss(reward_value_speed, target_reward)
 
         # log the loss
-        self.log("train_loss", loss_regularization + loss_reward)
+        self.log("train_loss", loss_regularization + 0.1 * loss_reward)
 
-        return loss_regularization + loss_reward, (loss_regularization, loss_reward)
+        return loss_regularization + 0.1 * loss_reward, (loss_regularization, loss_reward)
 
     def generate(self, nb_batch, nb_iter=100.0, init_states=None):
         """
@@ -135,7 +135,46 @@ class PLRewardGuidanceModel(L.LightningModule):
 
                 state_final_speed = state_final_speed - state_final_speed.mean(axis=-1, keepdim=True)
 
-                reward_value_noisy = reward_value_noisy + reward_speed + 1.0 / nb_iter
+                reward_value_noisy = reward_value_noisy + reward_speed * 1.0 / nb_iter
+                future_states = future_states + state_final_speed * 1.0 / nb_iter
+
+        return future_states, reward_value_noisy
+
+    def generate_with_reward_guidance(self, nb_batch, nb_iter=100.0, init_states=None, reward_speed_imposed=1., coef=0.5):
+        """
+        Method to generate samples from the model.
+        """
+        dirichlet_dist_inference = Dirichlet(
+            torch.tensor([5.0] * self.nb_dim_dirichlet)
+        )
+
+        # we start from time flag 0
+        time_flags = torch.zeros(nb_batch, 1).to(DEVICE)
+
+        # we start from shortcut value 0
+        reward_value_noisy = torch.zeros(nb_batch, 1).to(DEVICE)
+
+        # we generate the future states using dirichlet distribution
+        future_states = dirichlet_dist_inference.sample(
+            sample_shape=(nb_batch, self.model.nb_future_states, 9 * 6)
+        ).to(DEVICE)
+
+        with torch.inference_mode():
+
+            # loop with nb_iter
+            for i in range(int(nb_iter)):
+                # forward pass
+                time_flags = torch.ones(nb_batch, 1).to(DEVICE) * float(i) / nb_iter
+                state_final_speed, reward_speed = self.forward(
+                    init_states, future_states, time_flags, reward_value_noisy
+                )
+
+                # we modify the reward target in order to achieve the target reward (1.0)
+                reward_speed = reward_speed_imposed * coef + (1. - coef) * reward_speed
+
+                state_final_speed = state_final_speed - state_final_speed.mean(axis=-1, keepdim=True)
+
+                reward_value_noisy = reward_value_noisy + reward_speed * 1.0 / nb_iter
                 future_states = future_states + state_final_speed * 1.0 / nb_iter
 
         return future_states, reward_value_noisy

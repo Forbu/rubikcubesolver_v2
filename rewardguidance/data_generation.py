@@ -237,6 +237,7 @@ def fast_gathering_data_diffusion(
     goal_observation = jnp.repeat(goal_observation, rollout_length, axis=1)
     reward = jnp.where(state_histo != goal_observation, -1.0, 1.0)
 
+    # we want to know if somewhere the rubik is solved
     reward = reward.mean(axis=[2, 3, 4])
     reward = reward.max(axis=1)
 

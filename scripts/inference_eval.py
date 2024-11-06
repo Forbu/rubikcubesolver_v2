@@ -1,5 +1,13 @@
+# -*- coding: utf-8 -*-
+"""
+Created by Adrien Bufort
+Created on 2024-11-04
+This code is the property of Orange Innovation
+All rights reserved.
+"""
 """
 Inference script for the reward guidance model.
+We just want to check some result with it to get an idea of how strong the model is
 """
 
 from tqdm import tqdm
@@ -86,7 +94,7 @@ def main():
     count_parameters(pl_model.model)
 
     # load model from models/ folder
-    path_model = "models/model_99.pt"
+    path_model = "models/model_90.pt"
     pl_model.load_state_dict(torch.load(path_model))
 
     if cuda_available:
@@ -111,7 +119,7 @@ def main():
         nb_batch=64, nb_iter=100.0, init_states=init_states
     )
 
-    print(result_generation[0, :, :, :])
+    print("rewardgen mean : ", reward_gen.mean())
 
     # now we want to retrieve the data
     # and plot the results
@@ -123,23 +131,29 @@ def main():
     # we can use matplotlib or plotly
     import matplotlib.pyplot as plt
 
-    fig, axs = plt.subplots(1, 2, figsize=(10, 5))
+    # number of plot in the futur forecasted sequence
+    nb_futur_plot = 3
 
     # for the first batches we plot the init value
     for idx in range(4):
+
+        fig, axs = plt.subplots(1, nb_futur_plot + 1, figsize=(10, 5))
+
         init_value_tmp = init_value[idx, 0, :]
 
         # reshape to get image
         init_value_tmp = init_value_tmp.reshape(6, 3, 3)
         init_value_tmp = init_value_tmp.reshape(6* 3, 3)
         
-        # same thing but for the generated value
-        result_generation_tmp = result_generation[idx, 0, :].reshape(6, 3, 3).reshape(6 * 3, 3)
-
         axs[0].imshow(init_value_tmp)
         axs[0].set_title("Init value")
-        axs[1].imshow(result_generation_tmp)
-        axs[1].set_title("Generated value")
+
+        for futur_plot in range(nb_futur_plot):
+            # same thing but for the generated value
+            result_generation_tmp = result_generation[idx, futur_plot, :].reshape(6, 3, 3).reshape(6 * 3, 3)
+
+            axs[1 + futur_plot].imshow(result_generation_tmp)
+            axs[1 + futur_plot].set_title(f"Generated value for {futur_plot}")
 
         # save images in images/
         plt.savefig(f"images/image_{idx}.png")

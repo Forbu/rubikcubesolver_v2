@@ -13,9 +13,10 @@ from typing import Tuple
 import einops
 import torch
 import torch.nn as nn
+import numpy as np
 
 from rewardguidance.mamba2 import Mamba2, Mamba2Config, RMSNorm
-
+from x_transformers import TransformerWrapper, Encoder
 
 class RewardGuidanceModel(nn.Module):
     """
@@ -48,45 +49,47 @@ class RewardGuidanceModel(nn.Module):
         self.nb_input_dim = nb_input_dim
         self.nb_output_dim = nb_output_dim
 
-        config = Mamba2Config(
-                d_model=nb_hidden_dim,
-                n_layer=8,
-                d_state=32,
-                d_conv=4,
-                expand=2,
-                headdim=8,
-                chunk_size=chunk_size,
+
+        # Initialize the transformer encoder
+        self.transformer_encoder = Encoder(
+            dim = nb_hidden_dim,
+            depth = 6,
+            heads = 8,
+            rotary_pos_emb=True,
         )
 
-        self.mamba2_layers = nn.ModuleList(
-                    [
-                        nn.ModuleDict(
-                            dict(
-                                mixer=Mamba2(config, device=device),
-                                norm=RMSNorm(config.d_model, device=device),
-                            )
-                        )
-                        for _ in range(config.n_layer)
-                    ]
-                )
-
-
+        # Initialize linear layers with Xavier/Glorot initialization
         self.input_layer = nn.Linear(nb_input_dim, nb_hidden_dim)
+        nn.init.xavier_uniform_(self.input_layer.weight)
+        nn.init.zeros_(self.input_layer.bias)
+        
         self.output_layer = nn.Linear(nb_hidden_dim, nb_output_dim)
+        nn.init.xavier_uniform_(self.output_layer.weight)
+        nn.init.zeros_(self.output_layer.bias)
 
-        # embedding for the states
+        # Initialize states embedding with a smaller standard deviation
         self.states_embedding = nn.Parameter(
-            torch.randn(nb_future_states + nb_init_states, nb_hidden_dim)
+            torch.randn(nb_future_states + nb_init_states, nb_hidden_dim) * 0.02
         )
 
-        # embedding for the time flags
+        # Initialize time flags embedding
         self.time_flags_embedding = nn.Linear(1, nb_hidden_dim * 4)
+        nn.init.xavier_uniform_(self.time_flags_embedding.weight)
+        nn.init.zeros_(self.time_flags_embedding.bias)
 
-        # embedding for the shortcut value
+        # Initialize reward value embedding
         self.reward_value_embedding = nn.Linear(1, nb_hidden_dim * 4)
+        nn.init.xavier_uniform_(self.reward_value_embedding.weight)
+        nn.init.zeros_(self.reward_value_embedding.bias)
 
-        # linear layer for reward
+        # Initialize reward layer
         self.reward_layer = nn.Linear(nb_hidden_dim, 1)
+        nn.init.xavier_uniform_(self.reward_layer.weight)
+        nn.init.zeros_(self.reward_layer.bias)
+
+        # Add layer normalization before applying embeddings
+        self.pre_norm = nn.LayerNorm(nb_hidden_dim)
+        self.post_norm = nn.LayerNorm(nb_hidden_dim)
 
     def forward(
         self,
@@ -139,45 +142,44 @@ class RewardGuidanceModel(nn.Module):
         # modification of the input to add the time flags embeddings [:, :, :self.nb_hidden_dim]
         x = (
             x
-            * time_flags_embeddings[:, :, : self.nb_hidden_dim]
-            * reward_value_embeddings[:, :, : self.nb_hidden_dim]
+            * (1. + time_flags_embeddings[:, :, : self.nb_hidden_dim])
+            * (1. + reward_value_embeddings[:, :, : self.nb_hidden_dim])
             + time_flags_embeddings[:, :, self.nb_hidden_dim : (self.nb_hidden_dim * 2)]
             + reward_value_embeddings[
                 :, :, self.nb_hidden_dim : (self.nb_hidden_dim * 2)
             ]
         )
 
-        # we pass the input through the mamba2 model
-        for i, layer in enumerate(self.mamba2_layers):
-            y, _ = layer.mixer(layer.norm(x), None)
-            x = y + x
+        # Add residual connection around transformer
+        residual = x
+        x = self.transformer_encoder(x)
+        x = x + residual
 
-        # we add another embedding for the time flags
+
+        # Add layer normalization before applying embeddings
+        x = self.pre_norm(x)
         x = (
             x
-            * time_flags_embeddings[
-                :, :, (self.nb_hidden_dim * 2) : (self.nb_hidden_dim * 3)
-            ]
-            * reward_value_embeddings[
-                :, :, (self.nb_hidden_dim * 2) : (self.nb_hidden_dim * 3)
-            ]
-            + time_flags_embeddings[:, :, (self.nb_hidden_dim * 3) :]
-            + reward_value_embeddings[:, :, (self.nb_hidden_dim * 3) :]
+            * (1. + time_flags_embeddings[:, :, :self.nb_hidden_dim])  # Add 1 to prevent zeroing
+            * (1. + reward_value_embeddings[:, :, :self.nb_hidden_dim])
+            + time_flags_embeddings[:, :, self.nb_hidden_dim:(self.nb_hidden_dim * 2)]
+            + reward_value_embeddings[:, :, self.nb_hidden_dim:(self.nb_hidden_dim * 2)]
         )
+        x = self.post_norm(x)
 
         # we pass the output through the output layer
         state_final = self.output_layer(x)
 
-        # sum for the reward over the time
-        reward, reward_indices = x.max(dim=1)
-
-        # we pass the output through the reward layer
+        # Instead of mean pooling, consider using the final state or attention pooling
+        # reward = x.mean(dim=1)  # old code
+        
+        # Option 1: Use the final state
+        reward = x[:, -1, :]  # Use the last state
         reward = self.reward_layer(reward)
 
-        # we take only the seq_future_states last states
-        state_final = state_final[:, -self.nb_future_states:, :]
 
-        # we want to modify the state_final to be of shape (batch_size, seq_len, 6*9, 6)
-        state_final = state_final.view(batch_size, seq_future_states, -1, 6)
+        # Reshape more explicitly
+        state_final = state_final[:, -self.nb_future_states:, :]  # Take only future states
+        state_final = einops.rearrange(state_final, 'b s (h w) -> b s h w', h=9*6, w=6)
 
         return state_final, reward

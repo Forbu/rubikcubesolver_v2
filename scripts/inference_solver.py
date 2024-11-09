@@ -48,7 +48,7 @@ def main():
     # wandb.init(project="reward-guidance-rubiks", entity="forbu14")
 
     # first init random jax key
-    key = jax.random.PRNGKey(142)
+    key = jax.random.PRNGKey(144)
 
     batch_size = 64
     global_batch_size = 1000
@@ -94,7 +94,7 @@ def main():
     count_parameters(pl_model.model)
 
     # load model from models/ folder
-    path_model = "models/model_90.pt"
+    path_model = "models/model_99.pt"
     pl_model.load_state_dict(torch.load(path_model))
 
     if cuda_available:
@@ -132,7 +132,7 @@ def main():
     import matplotlib.pyplot as plt
 
     # number of plot in the futur forecasted sequence
-    nb_futur_plot = 10
+    nb_futur_plot = 11
 
     # for the first batches we plot the init value
     for idx in range(4):
@@ -158,6 +158,33 @@ def main():
         # save images in images/
         plt.savefig(f"images/image_{idx}.png")
 
+    # now we want to check the max reward value element 
+    reward_numpy = reward_gen.squeeze().cpu().detach().numpy()
+
+    idx_max = np.argmax(reward_numpy)
+
+    print("max element is ", idx_max)
+
+    fig, axs = plt.subplots(1, 1 + nb_futur_plot, figsize=(15, 5))
+
+    init_value_tmp = init_value[idx, 0, :]
+
+    # reshape to get image
+    init_value_tmp = init_value_tmp.reshape(6, 3, 3)
+    init_value_tmp = init_value_tmp.reshape(6* 3, 3)
+    
+    axs[0].imshow(init_value_tmp)
+    axs[0].set_title("Init value")
+
+    for futur_plot in range(nb_futur_plot):
+        # same thing but for the generated value
+        result_generation_tmp = result_generation[idx_max, futur_plot, :].reshape(6, 3, 3).reshape(6 * 3, 3)
+
+        axs[1 + futur_plot].imshow(result_generation_tmp)
+        axs[1 + futur_plot].set_title(f"Generated value for {futur_plot}")
+
+    # save images in images/
+    plt.savefig(f"images/max_image_{idx_max}.png")
 
 if __name__ == "__main__":
     main()

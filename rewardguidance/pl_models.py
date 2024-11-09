@@ -89,7 +89,9 @@ class PLRewardGuidanceModel(L.LightningModule):
             init_states, future_states_noisy, time_flags, reward_noisy
         )
 
+
         state_final_speed = state_final_speed - state_final_speed.mean(axis=-1, keepdim=True)
+
 
         target = future_states - pur_noise
         target_reward = rewards - pur_noise_reward

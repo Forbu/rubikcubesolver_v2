@@ -94,7 +94,7 @@ def main():
     count_parameters(pl_model.model)
 
     # load model from models/ folder
-    path_model = "models/model_90.pt"
+    path_model = "models/model_99.pt"
     pl_model.load_state_dict(torch.load(path_model))
 
     if cuda_available:

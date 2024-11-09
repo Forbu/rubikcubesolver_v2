@@ -1,4 +1,5 @@
 lightning
+x-transformers
 jax[cuda12]
 jaxlib
 jumanji # simulation

@@ -15,6 +15,8 @@ import torch
 import wandb
 from prettytable import PrettyTable
 
+# torch.backends.cuda.preferred_linalg_library()
+
 # variable to check if cuda is available
 cuda_available = torch.cuda.is_available()
 DEVICE = "cuda" if cuda_available else "cpu"
@@ -82,7 +84,7 @@ def main():
 
     # first init random jax key
     key = jax.random.PRNGKey(42)
-    lr = 0.001
+    lr = 0.0001
 
     batch_size = 64
     global_batch_size = 100000
@@ -120,7 +122,7 @@ def main():
         pl_model.model = pl_model.model.to("cuda")
         pl_model = pl_model.to("cuda")
 
-    # optimizer = torch.optim.AdamW(pl_model.parameters(), lr=lr)
+    #optimizer = torch.optim.AdamW(pl_model.parameters(), lr=lr)
     
     from rewardguidance.soap import SOAP
     optimizer = SOAP(pl_model.parameters(), lr = 1e-3, betas=(.95, .95), weight_decay=.01, precondition_frequency=10)

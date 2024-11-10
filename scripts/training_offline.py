@@ -73,14 +73,6 @@ def convert_batch_to_proper_device(batch):
     return batch_torch
 
 def main():
-    # init wandb
-    # init with key
-    # load key in wandb_key.txt
-    with open("wandb_key.txt", "r") as f:
-        wandb_key = f.read().strip()
-
-    wandb.login(key=wandb_key)
-    wandb.init(project="reward-guidance-rubiks", entity="forbu14")
 
     # first init random jax key
     key = jax.random.PRNGKey(42)
@@ -101,6 +93,16 @@ def main():
     replay_buffer_valid = init_replay_buffer(key, batch_size, global_batch_size_valid, nb_init_seq, nb_future_seq)
 
     print("Data generated. Now training...")
+
+    # init wandb
+    # init with key
+    # load key in wandb_key.txt
+    with open("wandb_key.txt", "r") as f:
+        wandb_key = f.read().strip()
+
+    wandb.login(key=wandb_key)
+    wandb.init(project="reward-guidance-rubiks", entity="forbu14")
+
 
     # init model
     model = RewardGuidanceModel(

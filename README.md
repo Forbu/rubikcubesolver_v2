@@ -17,3 +17,9 @@ To generate a reward value we can simply diffuse toward the end state (like in d
 In the second experience we will simply use a transformer instead of a mamba model.
 
 Also we will go from continuous loss toward discrete one like in the paper : https://arxiv.org/pdf/2404.19739v1 
+
+- One big point is that when using film layer to include scalar input, then use (1. + element) for multiplication set (to avoid bad conditioning)
+
+## Third experience 
+
+Keep the transformer / soap optimizer setup but used a cross entropy loss instead

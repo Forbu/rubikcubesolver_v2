@@ -119,6 +119,8 @@ def main():
         nb_batch=64, nb_iter=100.0, init_states=init_states
     )
 
+    print(result_generation)
+
     print("rewardgen mean : ", reward_gen.mean())
 
     # now we want to retrieve the data

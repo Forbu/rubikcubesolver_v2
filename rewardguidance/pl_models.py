@@ -85,21 +85,15 @@ class PLRewardGuidanceModel(L.LightningModule):
         reward_noisy = rewards * time_flags + pur_noise_reward * (1.0 - time_flags)
 
         # forward pass
-        state_final_speed, reward_value_speed = self.forward(
+        state_final_logit, reward_value_speed = self.forward(
             init_states, future_states_noisy, time_flags, reward_noisy
         )
 
-
-        state_final_speed = state_final_speed - state_final_speed.mean(axis=-1, keepdim=True)
-
-
-        target = future_states - pur_noise
         target_reward = rewards - pur_noise_reward
     
-        # output_target = torch.zeros_like(target)
-
         # compute the loss for the reward and the state_final_speed for  
-        loss_regularization = F.mse_loss(state_final_speed, target)
+        loss_regularization = F.cross_entropy(state_final_logit.transpose(1, -1), 
+                                    future_states.transpose(1, -1))
         loss_reward = F.mse_loss(reward_value_speed, target_reward)
 
         # log the loss
@@ -131,11 +125,13 @@ class PLRewardGuidanceModel(L.LightningModule):
             for i in range(int(nb_iter)):
                 # forward pass
                 time_flags = torch.ones(nb_batch, 1).to(DEVICE) * float(i) / nb_iter
-                state_final_speed, reward_speed = self.forward(
+                state_final_logit, reward_speed = self.forward(
                     init_states, future_states, time_flags, reward_value_noisy
                 )
 
-                state_final_speed = state_final_speed - state_final_speed.mean(axis=-1, keepdim=True)
+                state_final_proba = F.softmax(state_final_logit, dim=-1)
+                state_final_speed = 1. / (1. - time_flags.unsqueeze(-1).unsqueeze(-1) + \
+                                 0.0001) * (state_final_proba - future_states)
 
                 reward_value_noisy = reward_value_noisy + reward_speed * 1.0 / nb_iter
                 future_states = future_states + state_final_speed * 1.0 / nb_iter
@@ -167,14 +163,16 @@ class PLRewardGuidanceModel(L.LightningModule):
             for i in range(int(nb_iter)):
                 # forward pass
                 time_flags = torch.ones(nb_batch, 1).to(DEVICE) * float(i) / nb_iter
-                state_final_speed, reward_speed = self.forward(
+                state_final_logit, reward_speed = self.forward(
                     init_states, future_states, time_flags, reward_value_noisy
                 )
 
+                state_final_proba = F.softmax(state_final_logit, dim=-1)
+                state_final_speed = 1. / (1. - time_flags.unsqueeze(-1).unsqueeze(-1) + \
+                                 0.0001) * (state_final_proba - future_states)
+
                 # we modify the reward target in order to achieve the target reward (1.0)
                 reward_speed = reward_speed_imposed * coef + (1. - coef) * reward_speed
-
-                state_final_speed = state_final_speed - state_final_speed.mean(axis=-1, keepdim=True)
 
                 reward_value_noisy = reward_value_noisy + reward_speed * 1.0 / nb_iter
                 future_states = future_states + state_final_speed * 1.0 / nb_iter
